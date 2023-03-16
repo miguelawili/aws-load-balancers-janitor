@@ -1,0 +1,19 @@
+[package]
+name = "aws-load-balancers-janitor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.26.0", features = ["full"] }
+aws-types = "0.54.1"
+aws-config = "0.54.1"
+aws-sdk-elasticloadbalancingv2 = "0.24.0"
+aws-sdk-elasticloadbalancing = "0.24.0"
+aws-sdk-cloudwatch = "0.24.0"
+aws-smithy-types = "0.54.4"
+aws-smithy-types-convert = { version = "0.54.4", features = ["convert-chrono"] }
+chrono = "0.4.24"
+futures = "0.3.27"
+tabled = "0.10.0"
