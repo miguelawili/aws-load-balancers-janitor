@@ -7,17 +7,21 @@ use aws_sdk_cloudwatch::{
     Client as CloudWatchClient,
 };
 use aws_sdk_elasticloadbalancingv2::model::LoadBalancer as LoadBalancerV2;
+use aws_sdk_elasticloadbalancingv2::output::DeleteLoadBalancerOutput as DeleteOutput;
 use aws_sdk_elasticloadbalancingv2::Client as ELBv2Client;
 use aws_types::region::Region;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use tabled::Tabled;
+use tokio::sync::Semaphore;
 
 #[derive(Clone, Tabled)]
 pub struct ElbV2Data {
     pub arn: String,
     pub state: LoadBalancerState,
     pub region: Region,
+    pub vpc_id: String,
 }
 
 impl fmt::Debug for ElbV2Data {
@@ -26,45 +30,58 @@ impl fmt::Debug for ElbV2Data {
             .field("name", &self.arn)
             .field("state", &self.state)
             .field("region", &self.region)
+            .field("vpc_id", &self.vpc_id)
             .finish()
     }
 }
 
 impl ElbV2Data {
-    pub fn new(arn: &str, state: LoadBalancerState, region: Region) -> Self {
+    pub fn new(arn: &str, state: LoadBalancerState, region: Region, vpc_id: String) -> Self {
         ElbV2Data {
             arn: arn.to_string(),
             state,
             region,
+            vpc_id,
         }
     }
 }
 
-pub async fn process_region(region: Region, days: i64, _delete_inactive: bool) -> Vec<ElbV2Data> {
+pub async fn process_region(
+    region: Region,
+    days: i64,
+    vpc_ids: HashMap<String, bool>,
+) -> Vec<ElbV2Data> {
     let config = aws_config::from_env().region(region).load().await;
     let elbv2_client = ELBv2Client::new(&config);
     let cw_client = CloudWatchClient::new(&config);
 
     let elbv2_lbs = get_elbv2_load_balancers(&elbv2_client).await;
     let elbv2_data: Arc<Mutex<Vec<ElbV2Data>>> = Arc::new(Mutex::new(vec![]));
+    let sem = Arc::new(Semaphore::new(10));
 
     let mut tasks = Vec::new();
 
     for lb in elbv2_lbs {
         let client = elbv2_client.clone();
         let cw_client = cw_client.clone();
+        let sem = Arc::clone(&sem);
 
         let arn = lb.load_balancer_arn().unwrap().to_string();
+        let vpc_id = lb.vpc_id().unwrap().to_string();
+        let vpc_ids = vpc_ids.clone();
         let region_string = utils::extract_region_from_elbv2_arn(&arn).unwrap();
         let region = Region::new(region_string);
         let elbv2_data = Arc::clone(&elbv2_data);
 
         let task = async move {
             println!("Processing ELBv2: {}", arn);
+            let _perm = sem.acquire_owned().await;
             let state = get_elbv2_lb_state(arn.to_string(), &client, &cw_client, days).await;
             if let Some(state) = state {
                 let mut elbv2_data = elbv2_data.lock().unwrap();
-                elbv2_data.push(ElbV2Data::new(arn.as_str(), state, region));
+                if vpc_ids.contains_key(vpc_id.as_str()) {
+                    elbv2_data.push(ElbV2Data::new(arn.as_str(), state, region, vpc_id));
+                }
             }
         };
         tasks.push(task);
@@ -79,6 +96,39 @@ pub async fn process_region(region: Region, days: i64, _delete_inactive: bool) -
     let elbv2_data = elbv2_data.lock().unwrap();
 
     elbv2_data.to_vec()
+}
+
+pub async fn process_elbv2(elbv2s: Vec<ElbV2Data>) -> Vec<DeleteOutput> {
+    let deletion_results: Arc<Mutex<Vec<DeleteOutput>>> = Arc::new(Mutex::new(vec![]));
+    let mut tasks = Vec::new();
+
+    for elbv2 in elbv2s {
+        let region = elbv2.region;
+        let arn = elbv2.arn;
+
+        let config = aws_config::from_env().region(region).load().await;
+        let client = ELBv2Client::new(&config);
+
+        let deletion_results = Arc::clone(&deletion_results);
+
+        let task = async move {
+            println!("Processing ELBv2 deletion: {}", arn);
+            let res = delete_elbv2(&arn, &client).await;
+            let mut deletion_results = deletion_results.lock().unwrap();
+            deletion_results.push(res);
+        };
+
+        tasks.push(task);
+    }
+
+    let mut futures = Vec::new();
+    for task in tasks {
+        futures.push(task);
+    }
+    futures::future::join_all(futures).await;
+
+    let deletion_results = deletion_results.lock().unwrap();
+    deletion_results.to_vec()
 }
 
 async fn get_elbv2_load_balancers(client: &ELBv2Client) -> Vec<LoadBalancerV2> {
@@ -163,12 +213,13 @@ async fn get_elbv2_lb_state(
     }
 }
 
-async fn _delete_elbv2_lb(arn: &str, client: &ELBv2Client) {
-    client
+async fn delete_elbv2(arn: &str, client: &ELBv2Client) -> DeleteOutput {
+    let out = client
         .delete_load_balancer()
         .load_balancer_arn(arn)
         .send()
         .await
         .unwrap();
     println!("Deleted ELBv2 Load Balancer: {:?}", arn);
+    out
 }
