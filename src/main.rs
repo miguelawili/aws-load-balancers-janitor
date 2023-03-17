@@ -4,24 +4,48 @@ mod elbv2;
 mod models;
 mod utils;
 
-use crate::elb::{process_region as process_elb, ElbData};
-use crate::elbv2::{process_region as process_elbv2, ElbV2Data};
-use crate::models::LoadBalancerState;
-use aws_types::region::Region;
+use crate::elb::{process_elb as delete_elb, process_region as process_elb, ElbData};
+use crate::elbv2::{process_elbv2 as delete_elbv2, process_region as process_elbv2, ElbV2Data};
+use crate::models::{LoadBalancerState, RunOption};
+use clap::Parser;
 use tabled::Table;
+
+#[derive(Parser, Debug)]
+#[command(author = "Miguel Awili", version = "1.0.0", about, long_about = None)]
+struct Args {
+    /// AWS Regions to check
+    #[arg(short = 'r', long = "regions")]
+    regions: String,
+
+    /// VPC IDs to list/delete
+    #[arg(short = 'v', long = "vpc_ids")]
+    vpc_ids: String,
+
+    /// Days of metric to check
+    #[arg(short = 'd', long = "days")]
+    days: i64,
+
+    /// Run option to use;
+    /// Currently supports "list" and "delete"
+    #[arg(short = 'o', long = "option")]
+    run_option: String,
+}
 
 #[tokio::main]
 async fn main() {
-    let days: i64 = 45;
-    let regions = vec![Region::new("ap-southeast-1"), Region::new("us-west-2")];
-    let delete_inactive = false;
+    let cli_args = Args::parse();
+
+    let regions = utils::parse_regions_arg(&cli_args.regions);
+    let run_option = utils::parse_run_option_arg(&cli_args.run_option);
+    let vpc_ids = utils::parse_vpc_ids_arg(&cli_args.vpc_ids);
+    let days = cli_args.days;
 
     let mut elbv2_tasks = Vec::new();
     let mut elb_tasks = Vec::new();
 
     for region in regions {
-        let elbv2_task = tokio::spawn(process_elbv2(region.clone(), days, delete_inactive));
-        let elb_task = tokio::spawn(process_elb(region.clone(), days, delete_inactive));
+        let elbv2_task = tokio::spawn(process_elbv2(region.clone(), days, vpc_ids.clone()));
+        let elb_task = tokio::spawn(process_elb(region.clone(), days, vpc_ids.clone()));
         elbv2_tasks.push(elbv2_task);
         elb_tasks.push(elb_task);
     }
@@ -51,9 +75,26 @@ async fn main() {
         inactive_elb_data.append(&mut elb);
     }
 
-    let elbv2_table = Table::new(inactive_elbv2_data).to_string();
-    let elb_table = Table::new(inactive_elb_data).to_string();
+    match run_option {
+        RunOption::List => {
+            let elbv2_table = Table::new(inactive_elbv2_data).to_string();
+            let elb_table = Table::new(inactive_elb_data).to_string();
 
-    println!("{}", elbv2_table);
-    println!("{}", elb_table);
+            println!("{}", elbv2_table);
+            println!("{}", elb_table);
+        }
+        RunOption::Delete => {
+            let mut elbv2_tasks = Vec::new();
+            let mut elb_tasks = Vec::new();
+
+            let elbv2_task = tokio::spawn(delete_elbv2(inactive_elbv2_data));
+            let elb_task = tokio::spawn(delete_elb(inactive_elb_data));
+
+            elbv2_tasks.push(elbv2_task);
+            elb_tasks.push(elb_task);
+
+            futures::future::join_all(elbv2_tasks).await;
+            futures::future::join_all(elb_tasks).await;
+        }
+    }
 }
