@@ -1,4 +1,4 @@
-use crate::models::RunOption;
+use crate::models::{ListFormat, RunOption};
 use aws_types::region::Region;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -27,6 +27,13 @@ pub fn parse_vpc_ids_arg(vpc_ids: &str) -> HashMap<String, bool> {
 
 pub fn parse_run_option_arg(run_option: &str) -> RunOption {
     match RunOption::from_str(run_option) {
+        Ok(val) => val,
+        Err(_) => panic!("Shouldn't happen!"),
+    }
+}
+
+pub fn parse_list_format_arg(run_format: &str) -> ListFormat {
+    match ListFormat::from_str(run_format) {
         Ok(val) => val,
         Err(_) => panic!("Shouldn't happen!"),
     }
