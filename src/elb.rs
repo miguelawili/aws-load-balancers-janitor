@@ -79,7 +79,9 @@ pub async fn process_region(
             let state = get_elb_lb_state(lb_name.to_string(), &cw_client, days).await;
             if let Some(state) = state {
                 let mut elb_data = elb_data.lock().unwrap();
-                if vpc_ids.contains_key(vpc_id.as_str()) {
+                if vpc_ids.len() > 0 && vpc_ids.contains_key(vpc_id.as_str()) {
+                    elb_data.push(ElbData::new(lb_name.as_str(), state, region, vpc_id));
+                } else {
                     elb_data.push(ElbData::new(lb_name.as_str(), state, region, vpc_id));
                 }
             }
