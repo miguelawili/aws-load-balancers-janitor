@@ -49,7 +49,7 @@ pub fn extract_id_from_lb_arn(arn: &str) -> Option<String> {
     }
 }
 
-pub fn extract_elbv2_type_from_lb_arn(arn: &str) -> Option<String> {
+pub fn extract_namespace_from_lb_type(arn: &str) -> Option<String> {
     if arn.contains("loadbalancer/net") {
         Some("AWS/NetworkELB".to_string())
     } else if arn.contains("loadbalancer/app") {

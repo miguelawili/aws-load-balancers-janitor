@@ -170,7 +170,7 @@ async fn get_elbv2_lb_state(
         .unwrap_or_default();
 
     let lb_value = utils::extract_id_from_lb_arn(&arn).unwrap();
-    let lb_namespace = utils::extract_elbv2_type_from_lb_arn(&arn).unwrap();
+    let lb_namespace = utils::extract_namespace_from_lb_type(&arn).unwrap();
     let mut active = false;
 
     for tg in target_groups {
