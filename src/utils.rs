@@ -49,6 +49,16 @@ pub fn extract_id_from_lb_arn(arn: &str) -> Option<String> {
     }
 }
 
+pub fn extract_elbv2_type_from_lb_arn(arn: &str) -> Option<String> {
+    if arn.contains("loadbalancer/net") {
+        Some("AWS/NetworkELB".to_string())
+    } else if arn.contains("loadbalancer/app") {
+        Some("AWS/ApplicationELB".to_string())
+    } else {
+        None
+    }
+}
+
 pub fn extract_id_from_tg_arn(arn: &str) -> Option<String> {
     let parts: Vec<&str> = arn.split(':').collect();
     if parts.len() >= 6 {

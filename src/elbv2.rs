@@ -170,6 +170,7 @@ async fn get_elbv2_lb_state(
         .unwrap_or_default();
 
     let lb_value = utils::extract_id_from_lb_arn(&arn).unwrap();
+    let lb_namespace = utils::extract_elbv2_type_from_lb_arn(&arn).unwrap();
     let mut active = false;
 
     for tg in target_groups {
@@ -188,7 +189,7 @@ async fn get_elbv2_lb_state(
         ];
 
         let metric = Metric::builder()
-            .namespace("AWS/ApplicationELB")
+            .namespace(&lb_namespace)
             .metric_name("HealthyHostCount")
             .set_dimensions(Some(dimensions))
             .build();
