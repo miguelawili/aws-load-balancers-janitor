@@ -38,6 +38,42 @@ impl FromStr for RunOption {
 }
 
 #[derive(Clone, PartialEq)]
+pub enum ListFormat {
+    Tabled,
+    Csv,
+}
+
+impl fmt::Debug for ListFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ListFormat::Tabled => write!(f, "Tabled"),
+            ListFormat::Csv => write!(f, "Csv"),
+        }
+    }
+}
+
+impl fmt::Display for ListFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ListFormat::Tabled => write!(f, "Tabled"),
+            ListFormat::Csv => write!(f, "Csv"),
+        }
+    }
+}
+
+impl FromStr for ListFormat {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<ListFormat, Self::Err> {
+        match input.to_lowercase().as_str() {
+            "tabled" => Ok(ListFormat::Tabled),
+            "csv" => Ok(ListFormat::Csv),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub enum LoadBalancerState {
     Active,
     Inactive,

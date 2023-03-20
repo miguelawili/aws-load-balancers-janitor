@@ -6,7 +6,7 @@ mod utils;
 
 use crate::elb::{process_elb as delete_elb, process_region as process_elb, ElbData};
 use crate::elbv2::{process_elbv2 as delete_elbv2, process_region as process_elbv2, ElbV2Data};
-use crate::models::{LoadBalancerState, RunOption};
+use crate::models::{ListFormat, LoadBalancerState, RunOption};
 use clap::Parser;
 use tabled::Table;
 
@@ -29,6 +29,11 @@ struct Args {
     /// Currently supports "list" and "delete"
     #[arg(short = 'o', long = "option")]
     run_option: String,
+
+    /// List format
+    /// Currently supports "tabled" and "csv"
+    #[arg(short = 'f', long = "format")]
+    format: String,
 }
 
 #[tokio::main]
@@ -38,6 +43,7 @@ async fn main() {
     let regions = utils::parse_regions_arg(&cli_args.regions);
     let run_option = utils::parse_run_option_arg(&cli_args.run_option);
     let vpc_ids = utils::parse_vpc_ids_arg(&cli_args.vpc_ids);
+    let list_format = utils::parse_list_format_arg(&cli_args.format);
     let days = cli_args.days;
 
     let mut elbv2_tasks = Vec::new();
@@ -76,13 +82,32 @@ async fn main() {
     }
 
     match run_option {
-        RunOption::List => {
-            let elbv2_table = Table::new(inactive_elbv2_data).to_string();
-            let elb_table = Table::new(inactive_elb_data).to_string();
+        RunOption::List => match list_format {
+            ListFormat::Tabled => {
+                let elbv2_table = Table::new(inactive_elbv2_data).to_string();
+                let elb_table = Table::new(inactive_elb_data).to_string();
 
-            println!("{}", elbv2_table);
-            println!("{}", elb_table);
-        }
+                println!("{}", elbv2_table);
+                println!("{}", elb_table);
+            }
+            ListFormat::Csv => {
+                println!("arn,state,region,vpc_id");
+                for elbv2_data in inactive_elbv2_data {
+                    println!(
+                        "{},{},{},{}",
+                        elbv2_data.arn, elbv2_data.state, elbv2_data.region, elbv2_data.vpc_id
+                    );
+                }
+
+                println!("name,state,region,vpc_id");
+                for elb_data in inactive_elb_data {
+                    println!(
+                        "{},{},{},{}",
+                        elb_data.name, elb_data.state, elb_data.region, elb_data.vpc_id
+                    );
+                }
+            }
+        },
         RunOption::Delete => {
             let mut elbv2_tasks = Vec::new();
             let mut elb_tasks = Vec::new();
