@@ -1,5 +1,5 @@
 use crate::cloudwatch::get_metric_stats;
-use crate::models::LoadBalancerState;
+use crate::models::{LoadBalancerState, RunOption};
 use crate::utils;
 
 use aws_sdk_cloudwatch::{
@@ -42,6 +42,65 @@ impl ElbV2Data {
             state,
             region,
             vpc_id,
+        }
+    }
+}
+
+pub async fn process_account(
+    run_option: RunOption,
+    days: i64,
+    aws_accounts: HashMap<String, bool>,
+) {
+    let regions = utils::parse_regions_arg(&cli_args.regions);
+    let run_option = utils::parse_run_option_arg(&cli_args.run_option);
+    let vpc_ids = utils::parse_vpc_ids_arg(&cli_args.vpc_ids);
+    let list_format = utils::parse_list_format_arg(&cli_args.format);
+    let days = cli_args.days;
+
+    let mut tasks = Vec::new();
+    let mut inactive_elbv2_data: Vec<ElbV2Data> = vec![];
+
+    for region in regions {
+        let elbv2_task = tokio::spawn(process_region(region.clone(), days, vpc_ids.clone()));
+        tasks.push(elbv2_task);
+    }
+
+    for task in tasks {
+        let elbv2 = task.await.unwrap();
+
+        let mut elbv2 = elbv2
+            .into_iter()
+            .filter(|elbv2| elbv2.state == LoadBalancerState::Inactive)
+            .collect::<Vec<ElbV2Data>>();
+
+        inactive_elbv2_data.append(&mut elbv2);
+    }
+
+    match run_option {
+        RunOption::List => match list_format {
+            ListFormat::Tabled => {
+                let elbv2_table = Table::new(inactive_elbv2_data).to_string();
+
+                println!("{}", elbv2_table);
+            }
+            ListFormat::Csv => {
+                println!("arn,state,region,vpc_id");
+                for elbv2_data in inactive_elbv2_data {
+                    println!(
+                        "{},{},{},{}",
+                        elbv2_data.arn, elbv2_data.state, elbv2_data.region, elbv2_data.vpc_id
+                    );
+                }
+            }
+        },
+        RunOption::Delete => {
+            let mut tasks = Vec::new();
+
+            let elbv2_task = tokio::spawn(process_elbv2(inactive_elbv2_data));
+
+            tasks.push(elbv2_task);
+
+            futures::future::join_all(tasks).await;
         }
     }
 }
