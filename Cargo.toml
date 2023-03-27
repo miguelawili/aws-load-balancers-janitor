@@ -5,16 +5,22 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.release]
+debug = true
+
 [dependencies]
 tokio = { version = "1.26.0", features = ["full"] }
 aws-types = "0.54.1"
 aws-config = "0.54.1"
 aws-sdk-elasticloadbalancingv2 = "0.24.0"
 aws-sdk-elasticloadbalancing = "0.24.0"
+aws-sdk-iam = "0.24.0"
+aws-sdk-sts = "0.24.0"
 aws-sdk-cloudwatch = "0.24.0"
 aws-smithy-types = "0.54.4"
 aws-smithy-types-convert = { version = "0.54.4", features = ["convert-chrono"] }
 chrono = "0.4.24"
 futures = "0.3.27"
-tabled = "0.10.0"
-clap = { version = "4.1.9", features = ["derive"] }
+serde = { version = "1.0.158", features = ["derive"] }
+toml = "0.7.3"
+clap = { version = "4.1.13", features = ["derive"] }

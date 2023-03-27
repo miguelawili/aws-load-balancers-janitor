@@ -1,7 +1,8 @@
 use crate::cloudwatch::get_metric_stats;
-use crate::models::LoadBalancerState;
+use crate::models::{LoadBalancerState, RunOption};
 use crate::utils;
 
+use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_cloudwatch::{
     model::{Dimension, Metric},
     Client as CloudWatchClient,
@@ -9,14 +10,17 @@ use aws_sdk_cloudwatch::{
 use aws_sdk_elasticloadbalancing::model::LoadBalancerDescription as LoadBalancer;
 use aws_sdk_elasticloadbalancing::output::DeleteLoadBalancerOutput as DeleteOutput;
 use aws_sdk_elasticloadbalancing::Client as ELBClient;
+use aws_sdk_iam::Credentials;
+use aws_sdk_sts::types::DateTime as StsDateTime;
+use aws_sdk_sts::Client as StsClient;
 use aws_types::region::Region;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-use tabled::Tabled;
+use std::time::SystemTime;
 use tokio::sync::Semaphore;
 
-#[derive(Clone, Tabled)]
+#[derive(Clone)]
 pub struct ElbData {
     pub name: String,
     pub state: LoadBalancerState,
@@ -46,12 +50,107 @@ impl ElbData {
     }
 }
 
+pub async fn process_account(
+    run_option: RunOption,
+    days: i64,
+    iam_role: &str,
+    vpc_ids: Vec<String>,
+    regions: Vec<String>,
+) -> () {
+    let regions = utils::parse_regions_arg(&regions);
+    let vpc_ids = utils::parse_vpc_ids_arg(&vpc_ids);
+
+    let region_provider = RegionProviderChain::default_provider().or_else("ap-southeast-1");
+
+    let config = aws_config::from_env().region(region_provider).load().await;
+    let sts_client: StsClient = StsClient::new(&config);
+
+    let assumed_role = sts_client
+        .assume_role()
+        .role_arn(iam_role)
+        .role_session_name(&format!("lb_janitor_assumerole_session"))
+        .send()
+        .await;
+
+    let assumed_role = assumed_role.unwrap();
+    let credentials = assumed_role.credentials().unwrap();
+    let access_key_id = credentials.access_key_id().unwrap();
+    let secret_access_key = credentials.secret_access_key().unwrap();
+    let session_token = credentials.session_token().unwrap();
+    let expiry: StsDateTime = *credentials.expiration().unwrap();
+    let expiry: SystemTime = SystemTime::try_from(expiry).unwrap();
+
+    let credentials = Credentials::new(
+        access_key_id,
+        secret_access_key,
+        Some(session_token.to_string()),
+        Some(expiry),
+        "AWS",
+    );
+
+    let mut tasks = Vec::new();
+    let mut inactive_elb_data: Vec<ElbData> = vec![];
+
+    for region in regions {
+        let elb_task = tokio::spawn(process_region(
+            region,
+            credentials.clone(),
+            days,
+            vpc_ids.clone(),
+        ));
+        tasks.push(elb_task);
+    }
+
+    for task in tasks {
+        let elb = task.await.unwrap();
+
+        let mut elb = elb
+            .into_iter()
+            .filter(|elb| elb.state == LoadBalancerState::Inactive)
+            .collect::<Vec<ElbData>>();
+
+        inactive_elb_data.append(&mut elb);
+    }
+
+    match run_option {
+        RunOption::List => {
+            println!("========================");
+            println!("name,state,region,vpc_id");
+            println!("------------------------");
+            for elb_data in &inactive_elb_data {
+                println!(
+                    "{},{},{},{}",
+                    elb_data.name, elb_data.state, elb_data.region, elb_data.vpc_id
+                );
+            }
+        }
+        RunOption::Delete => {
+            let mut tasks = Vec::new();
+
+            let elb_task = tokio::spawn(process_elb(inactive_elb_data));
+
+            tasks.push(elb_task);
+
+            futures::future::join_all(tasks).await;
+        }
+        RunOption::Unknown => {
+            panic!("Run option invalid!");
+        }
+    }
+}
+
 pub async fn process_region(
     region: Region,
+    credentials: Credentials,
     days: i64,
     vpc_ids: HashMap<String, bool>,
 ) -> Vec<ElbData> {
-    let config = aws_config::from_env().region(region).load().await;
+    let config = aws_config::from_env()
+        .credentials_provider(credentials)
+        .region(region)
+        .load()
+        .await;
+
     let elb_client = ELBClient::new(&config);
     let cw_client = CloudWatchClient::new(&config);
 
