@@ -1,10 +1,10 @@
-use crate::models::{ListFormat, RunOption};
+use crate::models::ListFormat;
+
 use aws_types::region::Region;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-pub fn parse_regions_arg(regions: &str) -> Vec<Region> {
-    let regions = regions.split(",");
+pub fn parse_regions_arg(regions: &[String]) -> Vec<Region> {
     let mut regions_obj: Vec<Region> = Vec::new();
 
     for region in regions {
@@ -14,8 +14,7 @@ pub fn parse_regions_arg(regions: &str) -> Vec<Region> {
     regions_obj
 }
 
-pub fn parse_vpc_ids_arg(vpc_ids: &str) -> HashMap<String, bool> {
-    let vpc_ids = vpc_ids.split(",");
+pub fn parse_vpc_ids_arg(vpc_ids: &[String]) -> HashMap<String, bool> {
     let mut vpc_ids_map: HashMap<String, bool> = HashMap::new();
 
     for vpc_id in vpc_ids {
@@ -23,13 +22,6 @@ pub fn parse_vpc_ids_arg(vpc_ids: &str) -> HashMap<String, bool> {
     }
 
     vpc_ids_map
-}
-
-pub fn parse_run_option_arg(run_option: &str) -> RunOption {
-    match RunOption::from_str(run_option) {
-        Ok(val) => val,
-        Err(_) => panic!("Shouldn't happen!"),
-    }
 }
 
 pub fn parse_list_format_arg(run_format: &str) -> ListFormat {

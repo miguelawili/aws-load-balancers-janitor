@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
-use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::str::FromStr;
@@ -135,7 +134,7 @@ impl fmt::Display for LoadBalancerState {
 pub struct AppConfig {
     pub name: String,
     pub run_option: RunOption,
-    pub days: i32,
+    pub days: i64,
     pub aws: AwsConfig,
 }
 

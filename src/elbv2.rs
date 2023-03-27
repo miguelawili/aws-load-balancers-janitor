@@ -2,6 +2,7 @@ use crate::cloudwatch::get_metric_stats;
 use crate::models::{LoadBalancerState, RunOption};
 use crate::utils;
 
+use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_cloudwatch::{
     model::{Dimension, Metric},
     Client as CloudWatchClient,
@@ -9,14 +10,18 @@ use aws_sdk_cloudwatch::{
 use aws_sdk_elasticloadbalancingv2::model::LoadBalancer as LoadBalancerV2;
 use aws_sdk_elasticloadbalancingv2::output::DeleteLoadBalancerOutput as DeleteOutput;
 use aws_sdk_elasticloadbalancingv2::Client as ELBv2Client;
+use aws_sdk_iam::Credentials;
+use aws_sdk_sts::types::DateTime as StsDateTime;
+use aws_sdk_sts::Client as StsClient;
 use aws_types::region::Region;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-use tabled::Tabled;
+use std::time::SystemTime;
 use tokio::sync::Semaphore;
 
-#[derive(Clone, Tabled)]
+#[derive(Clone)]
 pub struct ElbV2Data {
     pub arn: String,
     pub state: LoadBalancerState,
@@ -49,19 +54,51 @@ impl ElbV2Data {
 pub async fn process_account(
     run_option: RunOption,
     days: i64,
-    aws_accounts: HashMap<String, bool>,
-) {
-    let regions = utils::parse_regions_arg(&cli_args.regions);
-    let run_option = utils::parse_run_option_arg(&cli_args.run_option);
-    let vpc_ids = utils::parse_vpc_ids_arg(&cli_args.vpc_ids);
-    let list_format = utils::parse_list_format_arg(&cli_args.format);
-    let days = cli_args.days;
+    iam_role: &str,
+    vpc_ids: Vec<String>,
+    regions: Vec<String>,
+) -> () {
+    let regions = utils::parse_regions_arg(&regions);
+    let vpc_ids = utils::parse_vpc_ids_arg(&vpc_ids);
+
+    let region_provider = RegionProviderChain::default_provider().or_else("ap-southeast-1");
+
+    let config = aws_config::from_env().region(region_provider).load().await;
+    let sts_client: StsClient = StsClient::new(&config);
+
+    let assumed_role = sts_client
+        .assume_role()
+        .role_arn(iam_role)
+        .role_session_name(&format!("lb_janitor_assumerole_session"))
+        .send()
+        .await;
+
+    let assumed_role = assumed_role.unwrap();
+    let credentials = assumed_role.credentials().unwrap();
+    let access_key_id = credentials.access_key_id().unwrap();
+    let secret_access_key = credentials.secret_access_key().unwrap();
+    let session_token = credentials.session_token().unwrap();
+    let expiry: StsDateTime = *credentials.expiration().unwrap();
+    let expiry: SystemTime = SystemTime::try_from(expiry).unwrap();
+
+    let credentials = Credentials::new(
+        access_key_id,
+        secret_access_key,
+        Some(session_token.to_string()),
+        Some(expiry),
+        "AWS",
+    );
 
     let mut tasks = Vec::new();
     let mut inactive_elbv2_data: Vec<ElbV2Data> = vec![];
 
     for region in regions {
-        let elbv2_task = tokio::spawn(process_region(region.clone(), days, vpc_ids.clone()));
+        let elbv2_task = tokio::spawn(process_region(
+            region,
+            credentials.clone(),
+            days,
+            vpc_ids.clone(),
+        ));
         tasks.push(elbv2_task);
     }
 
@@ -77,22 +114,17 @@ pub async fn process_account(
     }
 
     match run_option {
-        RunOption::List => match list_format {
-            ListFormat::Tabled => {
-                let elbv2_table = Table::new(inactive_elbv2_data).to_string();
-
-                println!("{}", elbv2_table);
+        RunOption::List => {
+            println!("=======================");
+            println!("arn,state,region,vpc_id");
+            println!("-----------------------");
+            for elbv2_data in &inactive_elbv2_data {
+                println!(
+                    "{},{},{},{}",
+                    elbv2_data.arn, elbv2_data.state, elbv2_data.region, elbv2_data.vpc_id
+                );
             }
-            ListFormat::Csv => {
-                println!("arn,state,region,vpc_id");
-                for elbv2_data in inactive_elbv2_data {
-                    println!(
-                        "{},{},{},{}",
-                        elbv2_data.arn, elbv2_data.state, elbv2_data.region, elbv2_data.vpc_id
-                    );
-                }
-            }
-        },
+        }
         RunOption::Delete => {
             let mut tasks = Vec::new();
 
@@ -102,21 +134,30 @@ pub async fn process_account(
 
             futures::future::join_all(tasks).await;
         }
+        RunOption::Unknown => {
+            panic!("Run option invalid!");
+        }
     }
 }
 
 pub async fn process_region(
     region: Region,
+    credentials: Credentials,
     days: i64,
     vpc_ids: HashMap<String, bool>,
 ) -> Vec<ElbV2Data> {
-    let config = aws_config::from_env().region(region).load().await;
+    let config = aws_config::from_env()
+        .credentials_provider(credentials)
+        .region(region)
+        .load()
+        .await;
+
     let elbv2_client = ELBv2Client::new(&config);
     let cw_client = CloudWatchClient::new(&config);
 
     let elbv2_lbs = get_elbv2_load_balancers(&elbv2_client).await;
     let elbv2_data: Arc<Mutex<Vec<ElbV2Data>>> = Arc::new(Mutex::new(vec![]));
-    let sem = Arc::new(Semaphore::new(10));
+    let sem = Arc::new(Semaphore::new(5));
 
     let mut tasks = Vec::new();
 
