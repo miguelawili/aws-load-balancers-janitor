@@ -49,9 +49,17 @@ impl ElbV2Data {
             vpc_id,
         }
     }
+
+    pub fn to_string(&mut self) -> String {
+        format!(
+            "{},{},{},{}",
+            self.arn, self.state, self.region, self.vpc_id
+        )
+    }
 }
 
 pub async fn process_account(
+    account_id: &str,
     run_option: RunOption,
     days: i64,
     iam_role: &str,
@@ -115,14 +123,16 @@ pub async fn process_account(
 
     match run_option {
         RunOption::List => {
-            println!("=======================");
-            println!("arn,state,region,vpc_id");
-            println!("-----------------------");
-            for elbv2_data in &inactive_elbv2_data {
-                println!(
-                    "{},{},{},{}",
-                    elbv2_data.arn, elbv2_data.state, elbv2_data.region, elbv2_data.vpc_id
-                );
+            let mut to_write: Vec<String> = vec![];
+            to_write.push("arn,state,region,vpc_id".to_string());
+            for elbv2_data in inactive_elbv2_data.iter_mut() {
+                let line = elbv2_data.to_string();
+                to_write.push(line);
+            }
+
+            let file_name = format!("outputs/{}_inactive_elbv2s.csv", &account_id);
+            if let Err(e) = utils::write_csv(file_name.as_str(), to_write) {
+                println!("Error writing to csv file! {}", e);
             }
         }
         RunOption::Delete => {
