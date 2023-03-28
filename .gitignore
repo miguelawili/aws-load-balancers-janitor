@@ -11,3 +11,6 @@ Cargo.lock
 
 # config files
 config/
+
+# output files
+outputs/

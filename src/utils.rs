@@ -1,8 +1,7 @@
-use crate::models::ListFormat;
-
 use aws_types::region::Region;
 use std::collections::HashMap;
-use std::str::FromStr;
+use std::fs::write;
+use std::io::Error;
 
 pub fn parse_regions_arg(regions: &[String]) -> Vec<Region> {
     let mut regions_obj: Vec<Region> = Vec::new();
@@ -24,11 +23,11 @@ pub fn parse_vpc_ids_arg(vpc_ids: &[String]) -> HashMap<String, bool> {
     vpc_ids_map
 }
 
-pub fn parse_list_format_arg(run_format: &str) -> ListFormat {
-    match ListFormat::from_str(run_format) {
-        Ok(val) => val,
-        Err(_) => panic!("Shouldn't happen!"),
-    }
+pub fn extract_account_id_from_role_arn(arn: &str) -> Option<String> {
+    let parts: Vec<&str> = arn.split(':').collect();
+
+    let account_id = parts[4];
+    Some(account_id.to_string())
 }
 
 pub fn extract_id_from_lb_arn(arn: &str) -> Option<String> {
@@ -76,5 +75,25 @@ pub fn extract_region_from_elb_dns(dns_name: &str) -> Option<String> {
         Some(parts[1].to_string())
     } else {
         None
+    }
+}
+
+pub fn write_csv(filename: &str, to_write: Vec<String>) -> Result<(), Error> {
+    match to_write.len() {
+        1 => {
+            println!("Nothing to write for {}", filename);
+            Ok(())
+        }
+
+        2.. => {
+            let to_write: String = to_write.join("\n");
+            write(filename, to_write)?;
+            Ok(())
+        }
+
+        _ => {
+            println!("Unknown behavior! {}", filename);
+            Ok(())
+        }
     }
 }

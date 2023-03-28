@@ -13,7 +13,7 @@ use models::AppConfig;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Config file
-    #[arg(short = 'c', long = "--config-file")]
+    #[arg(short = 'c', long = "config-file")]
     config_file: String,
 }
 
@@ -30,12 +30,23 @@ async fn main() {
     for aws_account in conf.aws.accounts {
         let days = conf.days;
         let run_option = conf.run_option.clone();
-        let iam_role = aws_account.iam_role.clone();
         let regions = aws_account.regions.clone();
         let vpc_ids = aws_account.vpc_ids.clone();
+        let iam_role = aws_account.iam_role.clone();
+        let account_id = utils::extract_account_id_from_role_arn(&iam_role)
+            .unwrap()
+            .clone();
 
         let elbv2_task = tokio::spawn(async move {
-            process_elbv2s(run_option, days, iam_role.as_str(), vpc_ids, regions).await;
+            process_elbv2s(
+                account_id.as_str(),
+                run_option,
+                days,
+                iam_role.as_str(),
+                vpc_ids,
+                regions,
+            )
+            .await;
         });
 
         let days = conf.days;
@@ -43,9 +54,20 @@ async fn main() {
         let iam_role = aws_account.iam_role.clone();
         let regions = aws_account.regions.clone();
         let vpc_ids = aws_account.vpc_ids.clone();
+        let account_id = utils::extract_account_id_from_role_arn(&iam_role)
+            .unwrap()
+            .clone();
 
         let elb_task = tokio::spawn(async move {
-            process_elbs(run_option, days, iam_role.as_str(), vpc_ids, regions).await;
+            process_elbs(
+                account_id.as_str(),
+                run_option,
+                days,
+                iam_role.as_str(),
+                vpc_ids,
+                regions,
+            )
+            .await;
         });
 
         elbv2_tasks.push(elbv2_task);
