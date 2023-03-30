@@ -166,7 +166,7 @@ pub async fn process_region(
 
     let elb_lbs = get_elb_load_balancers(&elb_client).await;
     let elb_data: Arc<Mutex<Vec<ElbData>>> = Arc::new(Mutex::new(vec![]));
-    let sem = Arc::new(Semaphore::new(10));
+    let sem = Arc::new(Semaphore::new(3));
 
     let mut tasks = Vec::new();
 
@@ -188,8 +188,10 @@ pub async fn process_region(
             let state = get_elb_lb_state(lb_name.to_string(), &cw_client, days).await;
             if let Some(state) = state {
                 let mut elb_data = elb_data.lock().unwrap();
-                if vpc_ids.len() > 0 && vpc_ids.contains_key(vpc_id.as_str()) {
-                    elb_data.push(ElbData::new(lb_name.as_str(), state, region, vpc_id));
+                if vpc_ids.len() > 0 {
+                    if vpc_ids.contains_key(vpc_id.as_str()) {
+                        elb_data.push(ElbData::new(lb_name.as_str(), state, region, vpc_id));
+                    }
                 } else {
                     elb_data.push(ElbData::new(lb_name.as_str(), state, region, vpc_id));
                 }

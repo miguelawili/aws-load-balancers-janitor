@@ -36,7 +36,6 @@ async fn main() {
         let account_id = utils::extract_account_id_from_role_arn(&iam_role)
             .unwrap()
             .clone();
-
         let elbv2_task = tokio::spawn(async move {
             process_elbv2s(
                 account_id.as_str(),
@@ -51,9 +50,9 @@ async fn main() {
 
         let days = conf.days;
         let run_option = conf.run_option.clone();
-        let iam_role = aws_account.iam_role.clone();
         let regions = aws_account.regions.clone();
         let vpc_ids = aws_account.vpc_ids.clone();
+        let iam_role = aws_account.iam_role.clone();
         let account_id = utils::extract_account_id_from_role_arn(&iam_role)
             .unwrap()
             .clone();
