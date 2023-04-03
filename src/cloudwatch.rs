@@ -1,11 +1,13 @@
-use aws_sdk_cloudwatch::types::DateTime as CloudwatchDateTime;
+use aws_sdk_cloudwatch::primitives::DateTime as CloudwatchDateTime;
 use aws_sdk_cloudwatch::{
-    model::{Metric, MetricDataQuery, MetricDataResult, MetricStat},
+    types::{Metric, MetricDataQuery, MetricDataResult, MetricStat},
     Client as CloudWatchClient,
 };
 use aws_smithy_types_convert::date_time::DateTimeExt;
 use chrono::{Duration, Utc};
+use tracing::{instrument, warn};
 
+#[instrument(skip(cw_client, days))]
 pub async fn get_metric_stats(
     cw_client: &CloudWatchClient,
     metric: Metric,
@@ -45,7 +47,7 @@ pub async fn get_metric_stats(
             None
         }
         Err(e) => {
-            eprintln!("Error getting metric stats: {}", e);
+            warn!("Error getting metric stats: {}", e);
             None
         }
     }

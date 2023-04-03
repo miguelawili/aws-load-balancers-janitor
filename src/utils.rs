@@ -2,6 +2,7 @@ use aws_types::region::Region;
 use std::collections::HashMap;
 use std::fs::write;
 use std::io::Error;
+use tracing::{info, instrument, warn};
 
 pub fn parse_regions_arg(regions: &[String]) -> Vec<Region> {
     let mut regions_obj: Vec<Region> = Vec::new();
@@ -78,10 +79,11 @@ pub fn extract_region_from_elb_dns(dns_name: &str) -> Option<String> {
     }
 }
 
+#[instrument(skip(to_write))]
 pub fn write_csv(filename: &str, to_write: Vec<String>) -> Result<(), Error> {
     match to_write.len() {
         1 => {
-            println!("Nothing to write for {}", filename);
+            info!("Nothing to write for {}", filename);
             Ok(())
         }
 
@@ -92,7 +94,7 @@ pub fn write_csv(filename: &str, to_write: Vec<String>) -> Result<(), Error> {
         }
 
         _ => {
-            println!("Unknown behavior! {}", filename);
+            warn!("Unknown behavior! {}", filename);
             Ok(())
         }
     }

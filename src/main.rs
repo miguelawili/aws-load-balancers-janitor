@@ -8,6 +8,11 @@ use clap::Parser;
 use elb::process_account as process_elbs;
 use elbv2::process_account as process_elbv2s;
 use models::AppConfig;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tracing::{debug, info};
+use tracing_subscriber;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -19,13 +24,28 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    let args = Args::parse();
+    tracing_subscriber::fmt::fmt()
+        .with_span_events(FmtSpan::CLOSE)
+        .with_target(false)
+        .with_thread_names(true)
+        .with_thread_ids(true)
+        .compact()
+        .init();
 
+    debug!("Parsing args...");
+    let args = Args::parse();
+    debug!("Args: {:?}", args);
+
+    debug!("Parsing config...");
     let conf = AppConfig::new(&args.config_file);
+    debug!("Config: {:?}", args);
 
     // dbg!("conf {}", conf);
     let mut elbv2_tasks = Vec::new();
     let mut elb_tasks = Vec::new();
+
+    let elbv2_sem = Arc::new(Semaphore::new(5));
+    let elb_sem = Arc::new(Semaphore::new(3));
 
     for aws_account in conf.aws.accounts {
         let days = conf.days;
@@ -36,7 +56,11 @@ async fn main() {
         let account_id = utils::extract_account_id_from_role_arn(&iam_role)
             .unwrap()
             .clone();
+
+        let elbv2_sem = Arc::clone(&elbv2_sem);
+        info!("Processing ELBv2s for AWS account: {}", account_id);
         let elbv2_task = tokio::spawn(async move {
+            let _perm = elbv2_sem.acquire_owned().await;
             process_elbv2s(
                 account_id.as_str(),
                 run_option,
@@ -57,7 +81,10 @@ async fn main() {
             .unwrap()
             .clone();
 
+        let elb_sem = Arc::clone(&elb_sem);
+        info!("Processing ELBs for AWS account: {}", account_id);
         let elb_task = tokio::spawn(async move {
+            let _perm = elb_sem.acquire_owned().await;
             process_elbs(
                 account_id.as_str(),
                 run_option,

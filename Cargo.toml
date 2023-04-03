@@ -10,17 +10,19 @@ debug = true
 
 [dependencies]
 tokio = { version = "1.26.0", features = ["full"] }
-aws-types = "0.54.1"
-aws-config = "0.54.1"
-aws-sdk-elasticloadbalancingv2 = "0.24.0"
-aws-sdk-elasticloadbalancing = "0.24.0"
-aws-sdk-iam = "0.24.0"
-aws-sdk-sts = "0.24.0"
-aws-sdk-cloudwatch = "0.24.0"
-aws-smithy-types = "0.54.4"
-aws-smithy-types-convert = { version = "0.54.4", features = ["convert-chrono"] }
+aws-types = "0.55.0"
+aws-config = "0.55.0"
+aws-sdk-elasticloadbalancingv2 = "0.25.0"
+aws-sdk-elasticloadbalancing = "0.25.0"
+aws-sdk-iam = "0.25.0"
+aws-sdk-sts = "0.25.0"
+aws-sdk-cloudwatch = "0.25.0"
+aws-smithy-types = "0.55.0"
+aws-smithy-types-convert = { version = "0.55.0", features = ["convert-chrono"] }
 chrono = "0.4.24"
 futures = "0.3.27"
 serde = { version = "1.0.158", features = ["derive"] }
 toml = "0.7.3"
 clap = { version = "4.1.13", features = ["derive"] }
+tracing-subscriber = "0.3.16"
+tracing = "0.1.37"

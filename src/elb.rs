@@ -4,14 +4,14 @@ use crate::utils;
 
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_cloudwatch::{
-    model::{Dimension, Metric},
+    types::{Dimension, Metric},
     Client as CloudWatchClient,
 };
-use aws_sdk_elasticloadbalancing::model::LoadBalancerDescription as LoadBalancer;
-use aws_sdk_elasticloadbalancing::output::DeleteLoadBalancerOutput as DeleteOutput;
+use aws_sdk_elasticloadbalancing::operation::delete_load_balancer::DeleteLoadBalancerOutput as DeleteOutput;
+use aws_sdk_elasticloadbalancing::types::LoadBalancerDescription as LoadBalancer;
 use aws_sdk_elasticloadbalancing::Client as ELBClient;
-use aws_sdk_iam::Credentials;
-use aws_sdk_sts::types::DateTime as StsDateTime;
+use aws_sdk_iam::config::Credentials;
+use aws_sdk_sts::primitives::DateTime as StsDateTime;
 use aws_sdk_sts::Client as StsClient;
 use aws_types::region::Region;
 use std::collections::HashMap;
@@ -19,6 +19,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tokio::sync::Semaphore;
+use tracing::{error, info, instrument};
 
 #[derive(Clone)]
 pub struct ElbData {
@@ -57,6 +58,7 @@ impl ElbData {
     }
 }
 
+#[instrument(skip_all, level = "trace")]
 pub async fn process_account(
     account_id: &str,
     run_option: RunOption,
@@ -73,6 +75,7 @@ pub async fn process_account(
     let config = aws_config::from_env().region(region_provider).load().await;
     let sts_client: StsClient = StsClient::new(&config);
 
+    info!(account_id, "Assuming IAM role {}", iam_role);
     let assumed_role = sts_client
         .assume_role()
         .role_arn(iam_role)
@@ -99,6 +102,7 @@ pub async fn process_account(
     let mut tasks = Vec::new();
     let mut inactive_elb_data: Vec<ElbData> = vec![];
 
+    info!(account_id, "Initializing tasks for elb processing...");
     for region in regions {
         let elb_task = tokio::spawn(process_region(
             region,
@@ -109,19 +113,23 @@ pub async fn process_account(
         tasks.push(elb_task);
     }
 
+    info!(account_id, "Spawning tasks for elb processing...");
     for task in tasks {
         let elb = task.await.unwrap();
 
+        info!("Filtering only inactive elbs...");
         let mut elb = elb
             .into_iter()
             .filter(|elb| elb.state == LoadBalancerState::Inactive)
             .collect::<Vec<ElbData>>();
 
+        info!("Appending to list of inactive elbs...");
         inactive_elb_data.append(&mut elb);
     }
 
     match run_option {
         RunOption::List => {
+            info!("Concatenating list...");
             let mut to_write: Vec<String> = vec![];
             to_write.push("name,state,region,vpc_id".to_string());
             for elb_data in inactive_elb_data.iter_mut() {
@@ -129,26 +137,28 @@ pub async fn process_account(
                 to_write.push(line);
             }
 
+            info!("Creating CSV file...");
             let file_name = format!("outputs/{}_inactive_elbs.csv", &account_id);
             if let Err(e) = utils::write_csv(file_name.as_str(), to_write) {
-                println!("Error writing to csv file! {}", e);
+                error!("Error writing to csv file! {}", e);
             }
         }
         RunOption::Delete => {
             let mut tasks = Vec::new();
 
-            let elb_task = tokio::spawn(process_elb(inactive_elb_data));
+            let elb_task = tokio::spawn(process_elb(inactive_elb_data, credentials.clone()));
 
             tasks.push(elb_task);
 
             futures::future::join_all(tasks).await;
         }
         RunOption::Unknown => {
-            panic!("Run option invalid!");
+            error!("Run option invalid!");
         }
     }
 }
 
+#[instrument(skip_all, level = "trace")]
 pub async fn process_region(
     region: Region,
     credentials: Credentials,
@@ -184,7 +194,7 @@ pub async fn process_region(
 
         let task = async move {
             let _perm = sem.acquire_owned().await;
-            println!("Processing ELB: {}", lb_name);
+            info!("Processing ELB: {}", lb_name);
             let state = get_elb_lb_state(lb_name.to_string(), &cw_client, days).await;
             if let Some(state) = state {
                 let mut elb_data = elb_data.lock().unwrap();
@@ -211,7 +221,8 @@ pub async fn process_region(
     elb_data.to_vec()
 }
 
-pub async fn process_elb(elbs: Vec<ElbData>) -> Vec<DeleteOutput> {
+#[instrument(skip_all, level = "trace")]
+pub async fn process_elb(elbs: Vec<ElbData>, credentials: Credentials) -> Vec<DeleteOutput> {
     let deletion_results: Arc<Mutex<Vec<DeleteOutput>>> = Arc::new(Mutex::new(vec![]));
     let mut tasks = Vec::new();
 
@@ -219,13 +230,18 @@ pub async fn process_elb(elbs: Vec<ElbData>) -> Vec<DeleteOutput> {
         let region = elb.region;
         let name = elb.name;
 
-        let config = aws_config::from_env().region(region).load().await;
+        let config = aws_config::from_env()
+            .credentials_provider(credentials.clone())
+            .region(region)
+            .load()
+            .await;
+
         let client = ELBClient::new(&config);
 
         let deletion_results = Arc::clone(&deletion_results);
 
         let task = async move {
-            println!("Processing ELB deletion: {}", name);
+            info!("Processing ELB deletion: {}", name);
             let res = delete_elb(&name, &client).await;
             let mut deletion_results = deletion_results.lock().unwrap();
             deletion_results.push(res);
@@ -244,6 +260,7 @@ pub async fn process_elb(elbs: Vec<ElbData>) -> Vec<DeleteOutput> {
     deletion_results.to_vec()
 }
 
+#[instrument(skip_all, level = "trace")]
 async fn get_elb_load_balancers(client: &ELBClient) -> Vec<LoadBalancer> {
     let mut lbs = Vec::new();
     let mut next_marker = None;
@@ -265,6 +282,7 @@ async fn get_elb_load_balancers(client: &ELBClient) -> Vec<LoadBalancer> {
     lbs
 }
 
+#[instrument(skip_all, level = "trace")]
 async fn get_elb_lb_state(
     arn: String,
     cw_client: &CloudWatchClient,
@@ -299,6 +317,7 @@ async fn get_elb_lb_state(
     }
 }
 
+#[instrument(skip_all, level = "trace")]
 async fn delete_elb(name: &str, client: &ELBClient) -> DeleteOutput {
     let out = client
         .delete_load_balancer()
@@ -306,6 +325,7 @@ async fn delete_elb(name: &str, client: &ELBClient) -> DeleteOutput {
         .send()
         .await
         .unwrap();
-    println!("Deleted Classic Load Balancer: {:?}", name);
+
+    info!("Deleted Classic Load Balancer: {:?}", name);
     out
 }
